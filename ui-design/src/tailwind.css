@@ -1,0 +1,152 @@
+@import "tailwindcss" source(none);
+@source "../index.html";
+@source "../live.html";
+@source "../app.js";
+
+@theme {
+  --color-paper: #f7f8f3;
+  --color-ink: #293e32;
+  --color-accent: #3a6049;
+  --color-muted: #68745f;
+  --color-line: #e0e5da;
+  --font-sans:
+    "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: "DM Serif Display", Georgia, serif;
+}
+
+@layer base {
+  button,
+  select {
+    cursor: pointer;
+  }
+  a,
+  button,
+  input,
+  select {
+    outline-offset: 4px;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+  }
+  [hidden] {
+    display: none !important;
+  }
+}
+
+@layer components {
+  .skip-link {
+    @apply fixed -top-20 left-4 z-50 rounded-md bg-accent px-4 py-3 text-sm text-white focus:top-4;
+  }
+  .icon,
+  .select-chevron {
+    @apply inline-block shrink-0;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .channel-tab {
+    @apply relative flex items-center gap-2 pb-4 text-[13px] text-muted transition-colors hover:text-accent;
+  }
+  .channel-tab.active {
+    @apply font-medium text-accent;
+  }
+  .channel-tab.active::after {
+    @apply absolute inset-x-0 -bottom-px h-0.5 bg-accent;
+    content: "";
+  }
+  .live-dot {
+    @apply inline-block size-1.5 shrink-0 rounded-full bg-accent;
+  }
+  .select-control {
+    @apply h-11 appearance-none rounded-lg border border-line bg-white pr-9 pl-3.5 text-xs text-ink;
+  }
+  .select-chevron {
+    @apply pointer-events-none absolute top-4 right-3 size-3 text-muted;
+  }
+  .recording-grid {
+    @apply grid items-center gap-3 px-2 sm:gap-5 sm:px-3;
+    grid-template-columns: 30px minmax(0, 1fr) 42px;
+  }
+  .recording-row {
+    @apply border-b border-line py-4 transition-colors;
+  }
+  .recording-row:hover {
+    background: color-mix(in srgb, var(--color-accent) 4%, var(--color-paper));
+  }
+  .recording-row.selected {
+    background: color-mix(in srgb, var(--color-accent) 7%, var(--color-paper));
+  }
+  .row-play {
+    @apply flex size-7.5 items-center justify-center rounded-full border border-line text-accent transition-colors;
+  }
+  .recording-row.selected .row-play {
+    @apply border-accent bg-accent text-white;
+  }
+  .play-button {
+    @apply flex size-10 shrink-0 items-center justify-center rounded-full bg-paper text-accent transition-opacity hover:opacity-85;
+  }
+  .library-player {
+    @apply fixed inset-x-0 bottom-0 z-20 bg-accent py-5 text-white;
+    padding-bottom: max(20px, env(safe-area-inset-bottom));
+  }
+  .seek-input {
+    @apply block h-1 cursor-pointer appearance-none rounded-full;
+    background: linear-gradient(
+      to right,
+      #f7f8f3 var(--progress, 0%),
+      #ffffff35 var(--progress, 0%)
+    );
+  }
+  .seek-input::-webkit-slider-thumb {
+    @apply size-2.5 appearance-none rounded-full bg-paper;
+  }
+  .seek-input::-moz-range-thumb {
+    @apply size-2.5 rounded-full border-0 bg-paper;
+  }
+  .library-player :focus-visible {
+    outline-color: white;
+  }
+  .live-progress {
+    @apply h-1 appearance-none overflow-hidden rounded-full border-0 bg-line;
+  }
+  .live-progress::-webkit-progress-bar {
+    background: var(--color-line);
+  }
+  .live-progress::-webkit-progress-value {
+    background: var(--color-accent);
+    border-radius: 4px;
+  }
+  .live-progress::-moz-progress-bar {
+    background: var(--color-accent);
+    border-radius: 4px;
+  }
+
+  @media (min-width: 640px) {
+    .recording-grid {
+      grid-template-columns: 32px minmax(0, 1fr) 96px 52px;
+    }
+  }
+  @media (max-width: 639px) {
+    .library-player {
+      padding-bottom: max(30px, calc(env(safe-area-inset-bottom) + 20px));
+    }
+    .library-timeline {
+      position: absolute;
+      left: 20px;
+      right: 20px;
+      bottom: 11px;
+    }
+    .library-timeline > div {
+      display: none;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition: none !important;
+    }
+  }
+}

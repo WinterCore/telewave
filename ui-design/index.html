@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f7f8f3" />
+    <meta name="description" content="Recordings from The Listening Room." />
+    <title>Recordings — The Listening Room</title>
+    <link rel="icon" href="assets/channel-logo.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Serif+Display:ital@0;1&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="channel.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body data-page="recordings" class="bg-paper font-sans text-ink antialiased">
+    <a class="skip-link" href="#main">Skip to recordings</a>
+    <div class="mx-auto max-w-5xl px-5 pt-9 pb-36 sm:px-9 sm:pt-14">
+      <header>
+        <div class="flex items-center gap-5 sm:gap-6">
+          <img
+            data-channel-logo
+            src="assets/channel-logo.svg"
+            alt="The Listening Room logo"
+            width="88"
+            height="88"
+            class="size-16 shrink-0 rounded-2xl object-cover sm:size-22"
+          />
+          <div class="min-w-0">
+            <p
+              data-channel-handle
+              class="mb-1.5 text-[11px] tracking-wide text-muted"
+            >
+              @thelisteningroom
+            </p>
+            <h1
+              data-channel-name
+              class="font-display text-[30px] leading-tight tracking-tight sm:text-[42px]"
+            >
+              The Listening Room
+            </h1>
+            <p
+              data-channel-description
+              class="mt-2 max-w-xl text-[13px] leading-relaxed text-muted"
+            >
+              Conversations and quiet discoveries. A little room to listen.
+            </p>
+          </div>
+        </div>
+        <nav
+          class="mt-8 flex gap-7 border-b border-line sm:mt-10"
+          aria-label="Channel pages"
+        >
+          <a class="channel-tab active" href="index.html" aria-current="page"
+            >Recordings</a
+          >
+          <a class="channel-tab" href="live.html"
+            ><span class="live-dot" aria-hidden="true"></span>Live stream</a
+          >
+        </nav>
+      </header>
+      <main id="main" class="pt-8 sm:pt-9">
+        <div class="mb-5 flex items-baseline gap-3">
+          <h2 class="font-display text-[27px] tracking-tight">
+            All recordings
+          </h2>
+          <span
+            id="recording-count"
+            class="text-xs text-muted"
+            aria-live="polite"
+            >8 recordings</span
+          >
+        </div>
+        <div class="mb-6 grid grid-cols-2 gap-3 sm:flex">
+          <label
+            class="flex h-11 min-w-0 flex-1 items-center gap-3 rounded-lg border border-line bg-white px-3.5 max-sm:col-span-2 focus-within:border-accent"
+          >
+            <svg
+              class="icon size-4 text-muted"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <circle cx="10.5" cy="10.5" r="6.5" />
+              <path d="m16 16 5 5" />
+            </svg>
+            <input
+              id="search"
+              type="search"
+              placeholder="Search recordings…"
+              aria-label="Search recordings"
+              autocomplete="off"
+              class="h-full w-full min-w-0 border-0 bg-transparent text-[13px] outline-none placeholder:text-muted"
+            />
+          </label>
+          <div class="relative">
+            <select
+              id="filter"
+              aria-label="Filter by type"
+              class="select-control w-full sm:w-40"
+            >
+              <option value="all">All types</option>
+              <option value="Conversation">Conversations</option>
+              <option value="Story">Stories</option>
+              <option value="Reflection">Reflections</option>
+              <option value="Ambient">Ambient</option>
+            </select>
+            <svg class="select-chevron" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </div>
+          <div class="relative">
+            <select
+              id="sort"
+              aria-label="Sort recordings"
+              class="select-control w-full sm:w-40"
+            >
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="duration">Shortest first</option>
+              <option value="title">Title A–Z</option>
+            </select>
+            <svg class="select-chevron" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </div>
+        </div>
+        <div
+          class="recording-grid border-b border-line pb-3 text-[10px] font-medium uppercase tracking-widest text-muted"
+          aria-hidden="true"
+        >
+          <span></span><span>Recording</span
+          ><span class="hidden sm:block">Added</span
+          ><span class="text-right">Length</span>
+        </div>
+        <div id="recordings" role="list" aria-label="Channel recordings"></div>
+        <div id="empty-state" class="py-16 text-center" hidden>
+          <h3 class="font-display text-2xl">No recordings found.</h3>
+          <p class="mt-2 text-sm text-muted">
+            Try another search or recording type.
+          </p>
+          <button
+            id="clear-filters"
+            class="mt-4 text-xs font-medium text-accent underline underline-offset-4"
+          >
+            Clear filters
+          </button>
+        </div>
+      </main>
+      <footer class="mt-8 text-center text-[10px] tracking-wide text-muted">
+        Powered by <span class="font-semibold text-ink">telewave.</span>
+      </footer>
+    </div>
+    <section class="library-player" aria-label="Recording player">
+      <div
+        class="mx-auto flex max-w-5xl items-center gap-4 px-5 sm:gap-6 sm:px-9"
+      >
+        <img
+          id="player-art"
+          src="assets/slow-mornings.svg"
+          alt=""
+          width="44"
+          height="44"
+          class="size-11 shrink-0 rounded-md object-cover"
+        />
+        <div class="min-w-0 flex-1 sm:max-w-64">
+          <p id="player-title" class="truncate text-[13px] font-medium">
+            The art of slowing down
+          </p>
+          <p id="player-author" class="mt-1 truncate text-[11px] text-white/70">
+            Oliver Reed
+          </p>
+        </div>
+        <button
+          id="play-toggle"
+          class="play-button"
+          aria-label="Play The art of slowing down"
+        ></button>
+        <div class="library-timeline min-w-0 flex-1">
+          <input
+            id="seek"
+            type="range"
+            min="0"
+            max="2312"
+            value="0"
+            step="1"
+            aria-label="Playback position"
+            class="seek-input w-full"
+          />
+          <div
+            class="mt-2 flex justify-between text-[10px] tabular-nums text-white/70"
+          >
+            <span id="elapsed">0:00</span><span id="duration">38:32</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </body>
+</html>

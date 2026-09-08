@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f7f8f3" />
+    <meta name="description" content="Listen live to The Listening Room." />
+    <title>Live stream — The Listening Room</title>
+    <link rel="icon" href="assets/channel-logo.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Serif+Display:ital@0;1&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="channel.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body data-page="live" class="bg-paper font-sans text-ink antialiased">
+    <a class="skip-link" href="#main">Skip to live stream</a>
+    <div class="mx-auto max-w-5xl px-5 pt-9 pb-8 sm:px-9 sm:pt-14">
+      <header>
+        <div class="flex items-center gap-5 sm:gap-6">
+          <img
+            data-channel-logo
+            src="assets/channel-logo.svg"
+            alt="The Listening Room logo"
+            width="88"
+            height="88"
+            class="size-16 shrink-0 rounded-2xl object-cover sm:size-22"
+          />
+          <div class="min-w-0">
+            <p
+              data-channel-handle
+              class="mb-1.5 text-[11px] tracking-wide text-muted"
+            >
+              @thelisteningroom
+            </p>
+            <h1
+              data-channel-name
+              class="font-display text-[30px] leading-tight tracking-tight sm:text-[42px]"
+            >
+              The Listening Room
+            </h1>
+            <p
+              data-channel-description
+              class="mt-2 max-w-xl text-[13px] leading-relaxed text-muted"
+            >
+              Conversations and quiet discoveries. A little room to listen.
+            </p>
+          </div>
+        </div>
+        <nav
+          class="mt-8 flex gap-7 border-b border-line sm:mt-10"
+          aria-label="Channel pages"
+        >
+          <a class="channel-tab" href="index.html">Recordings</a>
+          <a class="channel-tab active" href="live.html" aria-current="page"
+            ><span class="live-dot" aria-hidden="true"></span>Live stream</a
+          >
+        </nav>
+      </header>
+      <main id="main" class="mx-auto max-w-sm py-9 text-center sm:py-11">
+        <div class="relative mx-auto max-w-80">
+          <img
+            id="live-art"
+            src="assets/slow-mornings.svg"
+            alt="Illustrated green hills with a winding path"
+            width="320"
+            height="320"
+            class="aspect-square w-full rounded-xl object-cover"
+          />
+          <span
+            class="absolute top-4 left-4 flex items-center gap-2 rounded-full bg-paper/95 px-3 py-1.5 text-[10px] font-medium uppercase tracking-widest text-accent"
+            ><span class="live-dot" aria-hidden="true"></span>Live</span
+          >
+        </div>
+        <h2
+          id="live-title"
+          class="mt-6 font-display text-[31px] leading-tight tracking-tight"
+        >
+          The art of slowing down
+        </h2>
+        <p id="live-metadata" class="mt-2 text-xs text-muted">
+          Oliver Reed · Conversation · 38 min
+        </p>
+        <p
+          id="live-description"
+          class="mx-auto mt-3 max-w-80 text-[13px] leading-relaxed text-muted"
+        >
+          On finding a little more space in everyday life.
+        </p>
+        <div class="mx-auto mt-6 max-w-80">
+          <progress
+            id="live-progress"
+            class="live-progress block w-full"
+            max="2312"
+            value="742"
+            aria-label="Current recording progress"
+          ></progress>
+          <div
+            class="mt-2.5 flex justify-between text-[11px] tabular-nums text-muted"
+          >
+            <span id="live-elapsed">12:22</span
+            ><span id="live-duration">38:32</span>
+          </div>
+        </div>
+        <button
+          id="live-toggle"
+          class="mt-6 inline-flex items-center justify-center gap-2.5 rounded-full bg-accent px-6 py-3 text-[13px] font-medium text-white transition-opacity hover:opacity-85"
+          aria-label="Listen live"
+        ></button>
+      </main>
+      <footer class="mt-1 text-center text-[10px] tracking-wide text-muted">
+        Powered by <span class="font-semibold text-ink">telewave.</span>
+      </footer>
+    </div>
+  </body>
+</html>
