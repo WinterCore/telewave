@@ -1,0 +1,16 @@
+{
+  "name": "telewave",
+  "private": true,
+  "workspaces": [
+    "webui"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace webui",
+    "build": "npm run build --workspace webui",
+    "preview": "npm run preview --workspace webui",
+    "check": "npm run check --workspace webui",
+    "dev:crawler": "cd crawler && cargo run",
+    "build:crawler": "cd crawler && cargo build",
+    "check:crawler": "cd crawler && cargo check"
+  }
+}

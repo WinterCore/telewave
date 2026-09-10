@@ -114,13 +114,13 @@ impl<'a> Auth<'a> {
         }
     }
 
-    pub fn handle(&self, json: &Value) {
+    pub fn handle(&self, json: &Value) -> bool {
         let state = AuthorizationState::deserialize(json);
 
         let state = match state {
             Err(e) => {
                 eprintln!("Unsupported updateAuthorizationState {e}\n{json}");
-                return;
+                return false;
             },
             Ok(state) => state,
         };
@@ -130,11 +130,14 @@ impl<'a> Auth<'a> {
             AuthorizationState::WaitPhoneNumber => self.send_phone_number(),
             AuthorizationState::WaitCode { code_info } => self.handle_auth_code(code_info),
             AuthorizationState::Ready => {
-                println!("{}", "Auth completed".green())
+                println!("{}", "Auth completed".green());
+                return true;
             },
             AuthorizationState::Other => {
                 eprintln!("Unhandled updateAuthorizationState {json}");
             },
         }
+
+        return false;
     }
 }

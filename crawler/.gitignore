@@ -1,0 +1,12 @@
+/target
+/tdlib-install
+/vendor/td/build
+
+# TDLib's session database and downloaded files. td.binlog grants full access
+# to the logged-in Telegram account — never commit this.
+/.data
+
+# Local environment files. Templates may be committed.
+.env
+.env.*
+!.env.example

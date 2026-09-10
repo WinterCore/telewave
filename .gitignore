@@ -1,10 +1,2 @@
-/target
-/tdlib-install
-/vendor/td/build
-
-# Credentials. .env.example is committed instead.
-/.env
-
-# TDLib's session database and downloaded files. td.binlog grants full access
-# to the logged-in Telegram account — never commit this.
-/.data
+node_modules/
+.DS_Store
