@@ -51,6 +51,10 @@ impl<'a> Auth<'a> {
         Self { client, config }
     }
 
+    pub fn init(&self) {
+        self.client.send(r#"{ "@type": "getAuthorizationState" }"#);
+    }
+
     fn send_tdlib_params(&self) {
         self.client.send_json(
             &json!({

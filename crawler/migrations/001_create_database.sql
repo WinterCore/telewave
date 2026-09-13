@@ -105,10 +105,15 @@ CREATE TABLE recording_jobs (
 
     last_error TEXT,
     failed_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX recording_jobs_pending_idx
     ON recording_jobs (created_at)
-    WHERE failed_at IS NULL;
+    WHERE failed_at IS NULL
+        AND completed_at IS NULL;
+
+CREATE INDEX recording_jobs_completed_idx
+    ON recording_jobs (completed_at);

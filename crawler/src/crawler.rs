@@ -1,17 +1,19 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{tdjson::ClientId, tdtypes::{Extra, ExtraTarget, Message}};
+use crate::{tdjson::ClientId, tdtypes::{Extra, ExtraTarget, Message}, DB};
 
 pub struct Crawler<'a> {
-    client: &'a ClientId,
+    db: DB,
+    td_client: &'a ClientId,
     state: u64,
 }
 
 impl<'a> Crawler<'a> {
-    pub fn new(client: &'a ClientId) -> Self {
+    pub fn new(td_client: &'a ClientId) -> Self {
         Self {
-            client,
+            db: DB::new(),
+            td_client,
             state: 0,
         }
     }
@@ -23,7 +25,7 @@ impl<'a> Crawler<'a> {
             request_id: self.state,
         };
 
-        self.client.send_json(&json!({
+        self.td_client.send_json(&json!({
             "@type": "searchChatMessages",
             "chat_id": channel_id,
             "topic_id": null,
