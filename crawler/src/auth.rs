@@ -118,6 +118,16 @@ impl<'a> Auth<'a> {
         }
     }
 
+    /// Advances the auth state machine one step.
+    ///
+    /// Feed this the `authorization_state` object of every `updateAuthorizationState`
+    /// update. Each call reacts to the current state by sending the next request:
+    /// TDLib parameters, the configured phone number, or — for `waitCode` — blocking
+    /// on stdin to read the login code.
+    ///
+    /// Returns `true` once the state is `authorizationStateReady`: login is complete
+    /// and no further auth handling is needed. Returns `false` for every other state,
+    /// including ones this can't parse (logged, then ignored).
     pub fn handle(&self, json: &Value) -> bool {
         let state = AuthorizationState::deserialize(json);
 

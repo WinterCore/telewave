@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -23,6 +24,19 @@ pub struct Message {
     pub date: i32,
     pub edit_date: i32,
     pub content: MessageContent,
+}
+
+pub fn unix_to_system_time(secs: i32) -> SystemTime {
+    if secs >= 0 {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(secs as u64)
+    } else {
+        SystemTime::UNIX_EPOCH - Duration::from_secs(secs.unsigned_abs() as u64)
+    }
+}
+
+/// TDLib uses 0 for "never".
+pub fn unix_to_system_time_opt(secs: i32) -> Option<SystemTime> {
+    (secs != 0).then(|| unix_to_system_time(secs))
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -111,10 +125,54 @@ pub enum ChatMemberStatusKind {
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct Supergroup {
     pub id: i64,
+    /// Null if the supergroup or channel has no username.
+    pub usernames: Option<Usernames>,
     pub date: i32,
     pub status: ChatMemberStatus,
+    pub member_count: i32,
     pub is_channel: bool,
 }
+
+/// The fields needed by the crawler from TDLib's `usernames` object.
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct Usernames {
+    /// The first entry is the primary username; empty if there is none.
+    pub active_usernames: Vec<String>,
+}
+
+/// The fields needed by the crawler from TDLib's `chat` object.
+///
+/// TDLib includes additional fields in this object; Serde ignores those fields
+/// so this remains a deliberately narrow model.
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct Chat {
+    pub id: i64,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub kind: ChatType,
+    /// Chat lists this chat belongs to; non-empty means actual membership.
+    /// TDLib also sends `updateNewChat` for merely previewed chats. (`positions`
+    /// is not reliable for this: a chat can have a position in a list it does
+    /// not belong to.)
+    pub chat_lists: Vec<ChatList>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(tag = "@type")]
+pub enum ChatType {
+    #[serde(rename = "chatTypeSupergroup")]
+    Supergroup {
+        supergroup_id: i64,
+        is_channel: bool,
+    },
+    #[serde(other)]
+    Other,
+}
+
+/// The fields needed by the crawler from TDLib's `chatListMain`/`chatListArchive`
+/// objects: none. Only whether `chat.chat_lists` contains an entry matters.
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct ChatList {}
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct Audio {
@@ -146,9 +204,11 @@ pub struct FormattedText {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use std::time::{Duration, UNIX_EPOCH};
 
     use super::{
-        ChatMemberStatusKind, Message, MessageContent, MessageSender, TextEntityType, Update,
+        Chat, ChatMemberStatusKind, ChatType, Message, MessageContent, MessageSender,
+        TextEntityType, Update, unix_to_system_time, unix_to_system_time_opt,
     };
 
     #[test]
@@ -266,6 +326,11 @@ mod tests {
             "supergroup": {
                 "@type": "supergroup",
                 "id": 123,
+                "usernames": {
+                    "@type": "usernames",
+                    "active_usernames": ["telewave"],
+                    "editable_username": "telewave"
+                },
                 "date": 1_781_900_560,
                 "status": {
                     "@type": "chatMemberStatusMember"
@@ -281,8 +346,108 @@ mod tests {
         };
 
         assert_eq!(supergroup.id, 123);
+        assert_eq!(
+            supergroup.usernames.as_ref().unwrap().active_usernames,
+            vec!["telewave"]
+        );
         assert_eq!(supergroup.date, 1_781_900_560);
         assert_eq!(supergroup.status.kind, ChatMemberStatusKind::Member);
+        assert_eq!(supergroup.member_count, 42);
         assert!(supergroup.is_channel);
+    }
+
+    #[test]
+    fn deserializes_a_supergroup_without_usernames() {
+        let update: Update = serde_json::from_value(json!({
+            "@type": "updateSupergroup",
+            "supergroup": {
+                "@type": "supergroup",
+                "id": 123,
+                "usernames": null,
+                "date": 1_781_900_560,
+                "status": {
+                    "@type": "chatMemberStatusMember"
+                },
+                "member_count": 0,
+                "is_channel": false
+            }
+        }))
+        .expect("supergroup update should deserialize");
+
+        let Update::Supergroup { supergroup } = update else {
+            panic!("expected updateSupergroup");
+        };
+
+        assert_eq!(supergroup.usernames, None);
+        assert_eq!(supergroup.member_count, 0);
+    }
+
+    #[test]
+    fn deserializes_the_used_chat_fields() {
+        let chat: Chat = serde_json::from_value(json!({
+            "@type": "chat",
+            "id": -1_003_743_724_869_i64,
+            "type": {
+                "@type": "chatTypeSupergroup",
+                "supergroup_id": 3_743_724_869,
+                "is_channel": true
+            },
+            "title": "Telewave Radio ✦",
+            "photo": null,
+            "positions": [
+                {
+                    "@type": "chatPosition",
+                    "list": { "@type": "chatListMain" },
+                    "order": 100,
+                    "is_pinned": false
+                }
+            ],
+            "chat_lists": [ { "@type": "chatListMain" } ],
+            "is_marked_as_unread": false
+        }))
+        .expect("chat should deserialize");
+
+        assert_eq!(chat.id, -1_003_743_724_869);
+        assert_eq!(chat.title, "Telewave Radio ✦");
+        assert_eq!(
+            chat.kind,
+            ChatType::Supergroup {
+                supergroup_id: 3_743_724_869,
+                is_channel: true
+            }
+        );
+        assert_eq!(chat.chat_lists.len(), 1);
+    }
+
+    #[test]
+    fn deserializes_a_chat_that_is_not_a_supergroup() {
+        let chat: Chat = serde_json::from_value(json!({
+            "@type": "chat",
+            "id": 123,
+            "type": {
+                "@type": "chatTypePrivate",
+                "user_id": 456
+            },
+            "title": "Some Guy",
+            "chat_lists": []
+        }))
+        .expect("chat should deserialize");
+
+        assert_eq!(chat.kind, ChatType::Other);
+        assert!(chat.chat_lists.is_empty());
+    }
+
+    #[test]
+    fn converts_unix_seconds_to_system_time() {
+        assert_eq!(unix_to_system_time(0), UNIX_EPOCH);
+        assert_eq!(
+            unix_to_system_time(1_781_900_560),
+            UNIX_EPOCH + Duration::from_secs(1_781_900_560)
+        );
+        assert_eq!(unix_to_system_time_opt(0), None);
+        assert_eq!(
+            unix_to_system_time_opt(1_781_955_266),
+            Some(UNIX_EPOCH + Duration::from_secs(1_781_955_266))
+        );
     }
 }

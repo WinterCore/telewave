@@ -1,3 +1,6 @@
+\set ON_ERROR_STOP on
+
+
 CREATE TABLE users (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     telegram_user_id BIGINT NOT NULL UNIQUE,
@@ -53,6 +56,18 @@ CREATE TABLE channel_pages (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE channel_categories (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    channel_id BIGINT NOT NULL
+        REFERENCES channels(id) ON DELETE CASCADE,
+
+    name TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (channel_id, id),
+    UNIQUE (channel_id, name)
+);
+
 CREATE TABLE channel_authors (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     channel_id BIGINT NOT NULL
@@ -68,7 +83,8 @@ CREATE TABLE channel_page_recordings (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     channel_id BIGINT NOT NULL
         REFERENCES channel_pages(channel_id) ON DELETE CASCADE,
-    author_id BIGINT NOT NULL,
+    author_id BIGINT,
+    category_id BIGINT,
 
     telegram_message_id BIGINT NOT NULL,
     telegram_remote_file_id TEXT NOT NULL
@@ -81,14 +97,15 @@ CREATE TABLE channel_page_recordings (
         CHECK (file_size_bytes IS NULL OR file_size_bytes >= 0),
     storage_key TEXT,
     published_at TIMESTAMPTZ NOT NULL,
-    telegram_edited_at TIMESTAMPTZ,
     downloaded_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     UNIQUE (channel_id, telegram_message_id),
 
     FOREIGN KEY (channel_id, author_id)
-        REFERENCES channel_authors(channel_id, id)
+        REFERENCES channel_authors(channel_id, id),
+    FOREIGN KEY (channel_id, category_id)
+      REFERENCES channel_categories (channel_id, id)
 );
 
 CREATE INDEX channel_page_recordings_published_idx

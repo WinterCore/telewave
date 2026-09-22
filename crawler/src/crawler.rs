@@ -1,10 +1,10 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{tdjson::ClientId, tdtypes::{Extra, ExtraTarget, Message}, DB};
+use crate::{db, tdjson::ClientId, tdtypes::{Extra, ExtraTarget, Message}};
 
 pub struct Crawler<'a> {
-    db: DB,
+    client: postgres::Client,
     td_client: &'a ClientId,
     state: u64,
 }
@@ -12,7 +12,7 @@ pub struct Crawler<'a> {
 impl<'a> Crawler<'a> {
     pub fn new(td_client: &'a ClientId) -> Self {
         Self {
-            db: DB::new(),
+            client: db::connect().expect("Should connect to DB"),
             td_client,
             state: 0,
         }
@@ -51,6 +51,9 @@ impl<'a> Crawler<'a> {
         let json_messages = response.get("messages").ok_or(".messages is missing")?;
 
         let messages = Vec::<Message>::deserialize(json_messages).map_err(|_| "Failed to parse .messages");
+
+        println!("-----------------------------------------");
+        println!("Read {:?}", messages);
 
         Ok(())
     }
