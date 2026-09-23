@@ -3,17 +3,18 @@ use std::{collections::HashSet, time::{Duration, SystemTime}};
 use postgres::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tracing::debug;
 
-use crate::{db, tdjson::ClientId, tdtypes::{Chat, Supergroup, SupergroupFullInfo}};
+use crate::{db, tdjson::ClientId, tdtypes::{Chat, Supergroup, chat_to_supergroup_id, supergroup_to_chat_id}};
 // How many times we're allowed to sync per minute
-const SYNC_RATE: u8 = 3;
+const SYNC_RATE_PER_MIN: u8 = 3;
 
 pub struct ChannelManager<'a> {
     db_client: Client,
     td_client: &'a ClientId,
 
     // Pending channels which need their info updated
-    pending_channels_sync: Vec<i64>,
+    pending_chat_ids_sync: Vec<i64>,
     last_sync_time: SystemTime,
 }
 
@@ -23,7 +24,7 @@ impl<'a> ChannelManager<'a> {
             db_client: db::connect().expect("Should connect to DB"),
             td_client,
 
-            pending_channels_sync: vec![],
+            pending_chat_ids_sync: vec![],
             last_sync_time: SystemTime::UNIX_EPOCH,
         }
     }
@@ -37,70 +38,87 @@ impl<'a> ChannelManager<'a> {
     }
     
     fn should_sync(&self) -> bool {
-        let throttle_duration = Duration::from_millis(1 * 1000 / SYNC_RATE as u64);
+        let throttle_duration = Duration::from_millis(1 * 1000 * 60 / SYNC_RATE_PER_MIN as u64);
 
         self.last_sync_time + throttle_duration < SystemTime::now()
     }
 
-    fn sync_channel(&self) -> Result<(), String> {
+    pub fn sync(&mut self) -> Result<(), String> {
         if ! self.should_sync() {
             return Ok(())
         }
 
-        // Pick one channel
-        let chat_id = self.pending_channels_sync.get(0);
+        if self.pending_chat_ids_sync.is_empty() {
+            return Ok(())
+        }
+
+        let chat_id = self.pending_chat_ids_sync.remove(0);
+        self.last_sync_time = SystemTime::now();
+
+        let supergroup_id = chat_to_supergroup_id(chat_id);
+
+        debug!("Sent supergroup & chat metadata request for chat {}", chat_id);
+        self.td_client.send_json(&json!({
+            "@type": "getSupergroup",
+            "supergroup_id": supergroup_id,
+        }));
 
         self.td_client.send_json(&json!({
-            "@type": "getSupergroupFullInfo",
-            "supergroup_id": chat_id,
-            "@extra": {
-                "chat_id": chat_id,
-            },
+            "@type": "getChat",
+            "chat_id": chat_id,
         }));
         
         Ok(())
     }
 
-    fn handle_supergroup(&mut self, json: &Value) -> Result<(), String> {
-        let chat_id = json
-            .get("@extra")
-            .and_then(|x| x.get("chat_id"))
-            .and_then(|x| x.as_i64())
-            .ok_or("Failed to parse supergroup")?;
+    pub fn handle_supergroup(&mut self, json: &Value) -> Result<(), String> {
         let supergroup = Supergroup::deserialize(json)
             .map_err(|e| format!("Failed to parse supergroup {}", e))?;
 
-        let username = supergroup.usernames.and_then(|x| x.active_usernames.first().cloned());
+        let username = supergroup.usernames
+            .as_ref()
+            .and_then(|x| x.active_usernames.first().cloned());
+        let chat_id = supergroup_to_chat_id(supergroup.id);
         
-        db::channel::insert_or_update_channel(&mut self.db_client, db::channel::CreateChannel {
-            telegram_chat_id: chat_id,
-            status: db::channel::ChannelStatus::Active,
-            username: username.clone(),
-            // Will be updated later 
-            title: username.unwrap_or("".to_owned()),
-        });
+        debug!("Supergroup data (chat_id={}) {:?}", chat_id, supergroup);
+
+        db::channel::insert_or_update_channel(
+            &mut self.db_client,
+            db::channel::UpdateChannel {
+                telegram_chat_id: chat_id,
+                status: Some(db::channel::ChannelStatus::Active),
+                username: username.clone(),
+                // Updated by handle_chat
+                title: None,
+            })
+            .map_err(|e| format!("Failed to update channel: {}", db::error_string(&e)))?;
 
         Ok(())
     }
 
-    fn handle_chat(&mut self, json: &Value) -> Result<(), String> {
+    pub fn handle_chat(&mut self, json: &Value) -> Result<(), String> {
         let chat = Chat::deserialize(json)
             .map_err(|e| format!("Failed to parse chat {}", e))?;
 
-        db::channel::insert_or_update_channel(&mut self.db_client, db::channel::CreateChannel {
-            telegram_chat_id: chat_id,
-            status: db::channel::ChannelStatus::Active,
-            username: username.clone(),
-            // Will be updated later 
-            title: username.unwrap_or("".to_owned()),
-        });
+        debug!("Chat data (chat_id={}) {:?}", chat.id, chat);
+
+        db::channel::insert_or_update_channel(
+            &mut self.db_client,
+            db::channel::UpdateChannel {
+                telegram_chat_id: chat.id,
+                status: Some(db::channel::ChannelStatus::Active),
+                username: None,
+                // Will be updated later 
+                title: Some(chat.title),
+            })
+            .map_err(|e| format!("Failed to update channel: {}", db::error_string(&e)))?;
 
         Ok(())
     }
-    
+
 
     pub fn handle_chats(&mut self, json: &Value) -> Result<(), String> {
-        let mut tx = self.db_client.transaction().map_err(|e| format!("Failed to start db transaction: {}", e))?;
+        let mut tx = self.db_client.transaction().map_err(|e| format!("Failed to start db transaction: {}", db::error_string(&e)))?;
 
         let chat_ids = json.get("chat_ids")
             .and_then(|cids| cids.as_array())
@@ -112,10 +130,12 @@ impl<'a> ChannelManager<'a> {
                 .collect::<Vec<_>>()
             ).ok_or("Failed to parse chat_ids")?;
 
+        debug!("Chat list updated {:?}", chat_ids);
+
         let updated_channel_ids_set: HashSet<_> = chat_ids.iter().copied().collect();
 
         let existing_channels = db::channel::get_all_channels(&mut tx)
-            .map_err(|e| format!("Failed to get db channels {}", e))?;
+            .map_err(|e| format!("Failed to get db channels: {}", db::error_string(&e)))?;
 
         let existing_channel_ids_set: HashSet<_> = existing_channels
             .iter()
@@ -128,14 +148,15 @@ impl<'a> ChannelManager<'a> {
             .collect();
         
         db::channel::deactivate_channels(&mut tx, &channels_to_deactivate)
-            .map_err(|e| format!("Failed to deactivate channels {:?}: {}", channels_to_deactivate, e))?;
-        
-        tx.commit().map_err(|_| "Failed to update deactivated channels")?;
+            .map_err(|e| format!("Failed to deactivate channels {:?}: {}", channels_to_deactivate, db::error_string(&e)))?;
+
+        tx.commit().map_err(|e| format!("Failed to commit deactivated channels: {}", db::error_string(&e)))?;
 
 
-        self.pending_channels_sync = chat_ids;
+        debug!("Pending channel metadata update {:?}", chat_ids);
+        self.pending_chat_ids_sync = chat_ids;
 
-        self.sync_channel()?;
+        self.sync()?;
 
 
         Ok(())

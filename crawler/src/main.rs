@@ -25,18 +25,19 @@ mod db;
 
 /// Blocks until TDLib produces one parseable update.
 /// Timeouts are waited out; bad JSON is logged and skipped.
-fn next_update(rx: &mut Receiver) -> Value {
+fn next_update(rx: &mut Receiver) -> Option<Value> {
     loop {
         match rx.receive_json(Duration::from_secs(1)) {
-            Some(Ok(v)) => return v,
+            Some(Ok(v)) => return Some(v),
             Some(Err(e)) => eprintln!("bad JSON from TDLib: {e}"),
-            None => continue,
+            None => return None,
         }
     }
 }
 
 fn main() {
     tracing_subscriber::fmt()
+        .with_file(true)
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
@@ -55,7 +56,7 @@ fn main() {
     // Phase 1: the auth handshake. Auth updates drive the state machine;
     // anything else TDLib pushes in the meantime is irrelevant until login.
     loop {
-        let json = next_update(&mut rx);
+        let Some(json) = next_update(&mut rx) else { continue };
 
         match json["@type"].as_str() {
             Some("updateAuthorizationState") => {
@@ -81,7 +82,13 @@ fn main() {
     channel_manager.sync_chats();
 
     loop {
-        let json = next_update(&mut rx);
+        let update = next_update(&mut rx);
+        
+        let _ = channel_manager.sync()
+            .inspect_err(|x| error!(x));
+        debug!("Loopity loop");
+
+        let Some(json) = update else { continue };
 
         match json["@type"].as_str() {
             None => {
@@ -100,14 +107,25 @@ fn main() {
             },
             Some("chats") => {
                 // Chat list synced; the local database has our chats now.
-                channel_manager.handle_chats(&json)
+                let _ = channel_manager.handle_chats(&json)
                     .inspect_err(|x| error!(x));
 
+                continue;
+            },
+            Some("updateNewChat") | Some("chat") => {
+                let _ = channel_manager.handle_chat(&json)
+                    .inspect_err(|x| error!(x));
+
+                continue;
+            },
+            Some("supergroup") => {
+                let _ = channel_manager.handle_supergroup(&json)
+                    .inspect_err(|x| error!(x));
 
                 continue;
             },
             Some("error") => {
-                println!("{}", format!("Error: {}", json["message"]).red());
+                error!("Error: {}", json["message"]);
                 continue;
             },
             Some(_) => (),

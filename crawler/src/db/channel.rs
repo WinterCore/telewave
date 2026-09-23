@@ -73,12 +73,16 @@ pub fn get_all_channels(client: &mut impl GenericClient) -> Result<Vec<Channel>,
 }
 
 pub fn deactivate_channels(client: &mut impl GenericClient, telegram_chat_ids: &[i64]) -> Result<(), postgres::Error> {
+    if telegram_chat_ids.is_empty() {
+        return Ok(())
+    }
+
     client.execute("UPDATE channels SET status = 'paused' WHERE telegram_chat_id in ({})", &[&telegram_chat_ids])?;
 
     Ok(())
 }
 
-pub struct CreateChannel {
+pub struct UpdateChannel {
     /// The conflict key; always required.
     pub telegram_chat_id: i64,
     /// The rest are partial-update columns: None means "leave unchanged"
@@ -88,11 +92,11 @@ pub struct CreateChannel {
     pub status: Option<ChannelStatus>,
 }
 
-pub fn insert_or_update_channel(client: &mut impl GenericClient, channel: CreateChannel) -> Result<(), postgres::Error> {
+pub fn insert_or_update_channel(client: &mut impl GenericClient, channel: UpdateChannel) -> Result<(), postgres::Error> {
     client.execute(
         r#"
             INSERT INTO channels (telegram_chat_id, username, title, status)
-            VALUES ($1, $2, COALESCE($3, ''), COALESCE($4, 'active'))
+            VALUES ($1, $2, COALESCE($3, ''), COALESCE($4::channelstatus, 'active'))
             ON CONFLICT (telegram_chat_id) DO UPDATE SET
                 username = COALESCE(EXCLUDED.username, channels.username),
                 title = COALESCE(EXCLUDED.title, channels.title),

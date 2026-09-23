@@ -18,3 +18,20 @@ pub fn with_tx<T>(
     tx.commit()?;
     Ok(out)
 }
+
+/// Formats a `postgres::Error` with its server-side details.
+///
+/// The crate's own `Display` for database errors is just "db error"; the
+/// message, SQLSTATE and constraint only surface through `as_db_error()`.
+pub fn error_string(e: &Error) -> String {
+    match e.as_db_error() {
+        Some(db) => format!(
+            "{} (code: {}, constraint: {}, detail: {})",
+            db.message(),
+            db.code().code(),
+            db.constraint().unwrap_or("-"),
+            db.detail().unwrap_or("-")
+        ),
+        None => e.to_string(),
+    }
+}

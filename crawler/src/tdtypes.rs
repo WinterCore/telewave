@@ -174,6 +174,25 @@ pub enum ChatType {
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct ChatList {}
 
+/// Chat ids of supergroups and channels live in their own numeric range:
+/// `-1_000_000_000_000 - supergroup_id`. User ids are positive and basic-group
+/// ids are negated int32s, so both stay above this threshold.
+pub fn is_supergroup_chat_id(chat_id: i64) -> bool {
+    chat_id < -1_000_000_000_000
+}
+
+/// The chat id a supergroup or channel is addressed by (`getChat`, `chat_id`
+/// fields), from its raw `supergroup_id` (`getSupergroup`).
+pub fn supergroup_to_chat_id(supergroup_id: i64) -> i64 {
+    -1_000_000_000_000 - supergroup_id
+}
+
+/// The raw `supergroup_id` behind a supergroup/channel chat id.
+pub fn chat_to_supergroup_id(chat_id: i64) -> i64 {
+    debug_assert!(is_supergroup_chat_id(chat_id));
+    -chat_id - 1_000_000_000_000
+}
+
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct Audio {
     #[serde(rename = "audio")]
@@ -208,7 +227,8 @@ mod tests {
 
     use super::{
         Chat, ChatMemberStatusKind, ChatType, Message, MessageContent, MessageSender,
-        TextEntityType, Update, unix_to_system_time, unix_to_system_time_opt,
+        TextEntityType, Update, chat_to_supergroup_id, is_supergroup_chat_id,
+        supergroup_to_chat_id, unix_to_system_time, unix_to_system_time_opt,
     };
 
     #[test]
@@ -389,7 +409,7 @@ mod tests {
             "id": -1_003_743_724_869_i64,
             "type": {
                 "@type": "chatTypeSupergroup",
-                "supergroup_id": 3_743_724_869,
+                "supergroup_id": 3_743_724_869_i64,
                 "is_channel": true
             },
             "title": "Telewave Radio ✦",
@@ -435,6 +455,23 @@ mod tests {
 
         assert_eq!(chat.kind, ChatType::Other);
         assert!(chat.chat_lists.is_empty());
+    }
+
+    #[test]
+    fn converts_between_chat_and_supergroup_ids() {
+        assert_eq!(supergroup_to_chat_id(3_743_724_869), -1_003_743_724_869);
+        assert_eq!(chat_to_supergroup_id(-1_003_743_724_869), 3_743_724_869);
+        assert_eq!(
+            chat_to_supergroup_id(supergroup_to_chat_id(123_456_789)),
+            123_456_789
+        );
+    }
+
+    #[test]
+    fn distinguishes_supergroup_chat_ids_from_other_chats() {
+        assert!(is_supergroup_chat_id(-1_003_743_724_869));
+        assert!(!is_supergroup_chat_id(-123_456)); // basic group
+        assert!(!is_supergroup_chat_id(123_456)); // user
     }
 
     #[test]
