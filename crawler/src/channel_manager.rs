@@ -5,9 +5,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::debug;
 
-use crate::{db, tdjson::ClientId, tdtypes::{Chat, Supergroup, chat_to_supergroup_id, supergroup_to_chat_id}};
-// How many times we're allowed to sync per minute
-const SYNC_RATE_PER_MIN: u8 = 3;
+use crate::{Config, db, slug::slugify, tdjson::ClientId, tdtypes::{Chat, Supergroup, chat_to_supergroup_id, supergroup_to_chat_id}};
 
 pub struct ChannelManager<'a> {
     db_client: Client,
@@ -16,16 +14,19 @@ pub struct ChannelManager<'a> {
     // Pending channels which need their info updated
     pending_chat_ids_sync: Vec<i64>,
     last_sync_time: SystemTime,
+    // Minimum gap between syncs, precomputed from the rate config.
+    sync_interval: Duration,
 }
 
 impl<'a> ChannelManager<'a> {
-    pub fn new(td_client: &'a ClientId) -> Self {
+    pub fn new(td_client: &'a ClientId, config: &Config) -> Self {
         Self {
-            db_client: db::connect().expect("Should connect to DB"),
+            db_client: db::connect(&config.database_url).expect("Should connect to DB"),
             td_client,
 
             pending_chat_ids_sync: vec![],
             last_sync_time: SystemTime::UNIX_EPOCH,
+            sync_interval: Duration::from_millis(60_000 / config.channel_sync_rate_per_min),
         }
     }
 
@@ -38,9 +39,7 @@ impl<'a> ChannelManager<'a> {
     }
     
     fn should_sync(&self) -> bool {
-        let throttle_duration = Duration::from_millis(1 * 1000 * 60 / SYNC_RATE_PER_MIN as u64);
-
-        self.last_sync_time + throttle_duration < SystemTime::now()
+        self.last_sync_time + self.sync_interval < SystemTime::now()
     }
 
     pub fn sync(&mut self) -> Result<(), String> {
@@ -85,9 +84,9 @@ impl<'a> ChannelManager<'a> {
         db::channel::insert_or_update_channel(
             &mut self.db_client,
             db::channel::UpdateChannel {
-                telegram_chat_id: chat_id,
-                status: Some(db::channel::ChannelStatus::Active),
-                username: username.clone(),
+                telegram_chat_id: &chat_id,
+                status: Some(&db::channel::ChannelStatus::Active),
+                username: username.as_ref(),
                 // Updated by handle_chat
                 title: None,
             })
@@ -101,17 +100,29 @@ impl<'a> ChannelManager<'a> {
             .map_err(|e| format!("Failed to parse chat {}", e))?;
 
         debug!("Chat data (chat_id={}) {:?}", chat.id, chat);
+        
+        db::with_tx(&mut self.db_client, |tx| {
+            let channel_id = db::channel::insert_or_update_channel(
+                tx,
+                db::channel::UpdateChannel {
+                    telegram_chat_id: &chat.id,
+                    status: Some(&db::channel::ChannelStatus::Active),
+                    username: None,
+                    // Will be updated later 
+                    title: Some(&chat.title),
+                }
+            )?;
 
-        db::channel::insert_or_update_channel(
-            &mut self.db_client,
-            db::channel::UpdateChannel {
-                telegram_chat_id: chat.id,
-                status: Some(db::channel::ChannelStatus::Active),
-                username: None,
-                // Will be updated later 
-                title: Some(chat.title),
-            })
-            .map_err(|e| format!("Failed to update channel: {}", db::error_string(&e)))?;
+            db::channel::create_channel_page(
+                tx,
+                db::channel::CreateChannelPage {
+                    channel_id: &channel_id,
+                    title: Some(&chat.title),
+                    is_published: true,
+                    slug: &slugify(&chat.title),
+                }
+            )
+        }).map_err(|e| db::error_string(&e))?;
 
         Ok(())
     }

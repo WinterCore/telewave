@@ -1,6 +1,6 @@
 use postgres::{GenericClient, Row, types::{FromSql, ToSql, Type}};
 
-use std::{error::Error, time::SystemTime};
+use std::{error::Error, time::{Duration, SystemTime}};
 
 #[derive(Debug)]
 pub enum ChannelStatus {
@@ -82,18 +82,18 @@ pub fn deactivate_channels(client: &mut impl GenericClient, telegram_chat_ids: &
     Ok(())
 }
 
-pub struct UpdateChannel {
+pub struct UpdateChannel<'a> {
     /// The conflict key; always required.
-    pub telegram_chat_id: i64,
+    pub telegram_chat_id: &'a i64,
     /// The rest are partial-update columns: None means "leave unchanged"
     /// (NULL on the wire, COALESCE keeps the existing value).
-    pub username: Option<String>,
-    pub title: Option<String>,
-    pub status: Option<ChannelStatus>,
+    pub username: Option<&'a String>,
+    pub title: Option<&'a String>,
+    pub status: Option<&'a ChannelStatus>,
 }
 
-pub fn insert_or_update_channel(client: &mut impl GenericClient, channel: UpdateChannel) -> Result<(), postgres::Error> {
-    client.execute(
+pub fn insert_or_update_channel(client: &mut impl GenericClient, channel: UpdateChannel) -> Result<i64, postgres::Error> {
+    let row = client.query_one(
         r#"
             INSERT INTO channels (telegram_chat_id, username, title, status)
             VALUES ($1, $2, COALESCE($3, ''), COALESCE($4::channelstatus, 'active'))
@@ -101,6 +101,7 @@ pub fn insert_or_update_channel(client: &mut impl GenericClient, channel: Update
                 username = COALESCE(EXCLUDED.username, channels.username),
                 title = COALESCE(EXCLUDED.title, channels.title),
                 status = COALESCE(EXCLUDED.status, channels.status)
+            RETURNING id
         "#,
         &[
             &channel.telegram_chat_id,
@@ -110,7 +111,7 @@ pub fn insert_or_update_channel(client: &mut impl GenericClient, channel: Update
         ]
     )?;
 
-    Ok(())
+    row.try_get("id")
 }
 
 pub fn channel_from_row(row: &Row) -> Result<Channel, postgres::Error> {
@@ -124,4 +125,90 @@ pub fn channel_from_row(row: &Row) -> Result<Channel, postgres::Error> {
             created_at: row.try_get("created_at")?
         }
     )
+}
+
+pub struct CreateChannelPage<'a> {
+    pub channel_id: &'a i64,
+    pub slug: &'a str,
+    pub title: Option<&'a str>,
+    pub is_published: bool,
+}
+
+pub fn create_channel_page(client: &mut impl GenericClient, page: CreateChannelPage) -> Result<i64, postgres::Error> {
+    let row = client.query_one(
+        r#"
+            INSERT INTO channel_pages (channel_id, slug, display_title, is_published)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (channel_id) DO UPDATE SET channel_id = channel_pages.channel_id
+            RETURNING channel_id
+        "#,
+        &[
+            &page.channel_id,
+            &page.slug,
+            &page.title,
+            &page.is_published,
+        ]
+    )?;
+
+    row.try_get("channel_id")
+}
+
+pub struct CrawlCandidate {
+    pub channel_id: i64,
+    pub telegram_chat_id: i64,
+    pub last_scanned_message_id: Option<i64>,
+    pub title: String,
+}
+
+pub fn claim_channel_due_for_crawl(
+    client: &mut impl GenericClient,
+    crawl_stale_after: &Duration
+) -> Result<Option<CrawlCandidate>, postgres::Error> {
+    let mut tx = client.transaction()?;
+
+    let Some(row) = tx.query_opt(
+        r#"
+            SELECT
+                channel_id,
+                telegram_chat_id,
+                last_scanned_message_id,
+                title
+            FROM channel_pages
+            INNER JOIN channels ON channels.id = channel_pages.channel_id
+            WHERE 
+                status = 'active'
+                AND (
+                    last_crawl_started_at + $1::interval < now()
+                    OR last_crawl_started_at IS NULL
+                )
+            ORDER BY channel_pages.last_crawl_started_at NULLS FIRST
+            LIMIT 1
+            FOR UPDATE OF channel_pages SKIP LOCKED
+        "#,
+        &[&format!("{} seconds", crawl_stale_after.as_secs())],
+    )? else { return Ok(None) };
+    
+    let candidate = CrawlCandidate {
+        channel_id: row.try_get("channel_id")?,
+        telegram_chat_id: row.try_get("telegram_chat_id")?,
+        last_scanned_message_id: row.try_get("last_scanned_message_id")?,
+        title: row.try_get("title")?,
+    };
+    
+    tx.execute(
+        r#"
+            UPDATE channel_pages
+            SET
+                last_crawl_started_at = now(),
+                last_crawl_completed_at = NULL,
+                last_crawl_error = NULL
+            WHERE
+                channel_id = $1
+        "#,
+        &[&candidate.channel_id],
+    )?;
+
+    tx.commit()?;
+
+    Ok(Some(candidate))
 }

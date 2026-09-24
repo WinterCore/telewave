@@ -1,24 +1,29 @@
+use std::time::Duration;
+
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{db, tdjson::ClientId, tdtypes::{Extra, ExtraTarget, Message}};
+use crate::{Config, db, tdjson::ClientId, tdtypes::{Extra, ExtraTarget, Message}};
 
 pub struct Crawler<'a> {
     client: postgres::Client,
     td_client: &'a ClientId,
+    crawl_stale_after: Duration,
+
     state: u64,
 }
 
 impl<'a> Crawler<'a> {
-    pub fn new(td_client: &'a ClientId) -> Self {
+    pub fn new(td_client: &'a ClientId, config: &Config) -> Self {
         Self {
-            client: db::connect().expect("Should connect to DB"),
+            client: db::connect(&config.database_url).expect("Should connect to DB"),
+            crawl_stale_after: config.crawl_stale_after,
             td_client,
             state: 0,
         }
     }
     
-    pub fn crawl(&self, channel_id: i64, after_message_id: Option<i64>) {
+    pub fn crawl(&self) -> Result<(), String> {
         let from_message_id = after_message_id.unwrap_or(0);
         let extra = Extra {
             target: ExtraTarget::Crawler,
@@ -39,6 +44,8 @@ impl<'a> Crawler<'a> {
             },
             "@extra": extra,
         }));
+
+        Ok(())
     }
 
     pub fn handle_response(&self, response: Value) -> Result<(), String> {

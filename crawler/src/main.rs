@@ -22,6 +22,7 @@ mod crawler;
 mod channel_manager;
 mod tdtypes;
 mod db;
+mod slug;
 
 /// Blocks until TDLib produces one parseable update.
 /// Timeouts are waited out; bad JSON is logged and skipped.
@@ -69,8 +70,8 @@ fn main() {
         }
     }
 
-    let crawler = Crawler::new(&client);
-    let mut channel_manager = ChannelManager::new(&client);
+    let crawler = Crawler::new(&client, &config);
+    let mut channel_manager = ChannelManager::new(&client, &config);
 
 
     // Phase 2 kickoff: read the chat list back from TDLib. It auto-loads the
@@ -78,15 +79,20 @@ fn main() {
     // immediately with everything; getChats is a pure read-back (loadChats is
     // the side-effectful one, delivering chats via updateNewChat).
 
-    // Phase 2: the main event loop.
     channel_manager.sync_chats();
 
+    // Phase 2: the main event loop.
     loop {
         let update = next_update(&mut rx);
         
+        // Sync channels
         let _ = channel_manager.sync()
             .inspect_err(|x| error!(x));
-        debug!("Loopity loop");
+
+
+        // Crawl
+        let _ = crawler.crawl()
+            .inspect_err(|x| error!(x));
 
         let Some(json) = update else { continue };
 

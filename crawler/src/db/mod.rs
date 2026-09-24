@@ -3,8 +3,7 @@ use postgres::{Client, Error, GenericClient, NoTls, Transaction};
 pub mod channel;
 pub mod message;
 
-pub fn connect() -> Result<Client, Error> {
-    let url = "postgres://winter@127.0.0.1:5432/telewave";
+pub fn connect(url: &str) -> Result<Client, Error> {
     Client::connect(url, NoTls)
 }
 
