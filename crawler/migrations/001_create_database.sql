@@ -47,10 +47,11 @@ CREATE TABLE channel_pages (
     description TEXT,
     is_published BOOLEAN NOT NULL DEFAULT false,
 
-    last_scanned_message_id BIGINT,
+    crawl_checkpoint_message_id BIGINT,
     last_crawl_started_at TIMESTAMPTZ,
     last_crawl_completed_at TIMESTAMPTZ,
     last_crawl_error TEXT,
+    last_crawl_retry_count INT NOT NULL DEFAULT 0,
     
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

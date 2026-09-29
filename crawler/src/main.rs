@@ -70,7 +70,7 @@ fn main() {
         }
     }
 
-    let crawler = Crawler::new(&client, &config);
+    let mut crawler = Crawler::new(&client, &config);
     let mut channel_manager = ChannelManager::new(&client, &config);
 
 

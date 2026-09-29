@@ -153,10 +153,11 @@ pub fn create_channel_page(client: &mut impl GenericClient, page: CreateChannelP
     row.try_get("channel_id")
 }
 
+#[derive(Debug, Clone)]
 pub struct CrawlCandidate {
     pub channel_id: i64,
     pub telegram_chat_id: i64,
-    pub last_scanned_message_id: Option<i64>,
+    pub crawl_checkpoint_message_id: Option<i64>,
     pub title: String,
 }
 
@@ -171,7 +172,7 @@ pub fn claim_channel_due_for_crawl(
             SELECT
                 channel_id,
                 telegram_chat_id,
-                last_scanned_message_id,
+                crawl_checkpoint_message_id,
                 title
             FROM channel_pages
             INNER JOIN channels ON channels.id = channel_pages.channel_id
@@ -191,7 +192,7 @@ pub fn claim_channel_due_for_crawl(
     let candidate = CrawlCandidate {
         channel_id: row.try_get("channel_id")?,
         telegram_chat_id: row.try_get("telegram_chat_id")?,
-        last_scanned_message_id: row.try_get("last_scanned_message_id")?,
+        crawl_checkpoint_message_id: row.try_get("crawl_checkpoint_message_id")?,
         title: row.try_get("title")?,
     };
     
