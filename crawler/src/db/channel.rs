@@ -2,6 +2,8 @@ use postgres::{GenericClient, Row, types::{FromSql, ToSql, Type}};
 
 use std::{error::Error, time::{Duration, SystemTime}};
 
+use super::Error as DbError;
+
 #[derive(Debug)]
 pub enum ChannelStatus {
     Active,
@@ -57,27 +59,36 @@ pub struct Channel {
 pub fn get_channel_by_telegram_chat_id(
     client: &mut impl GenericClient,
     telegram_chat_id: i64,
-) -> Result<Channel, postgres::Error> {
+) -> Result<Channel, DbError> {
     let row = client.query_one(
         "SELECT * FROM channels WHERE telegram_chat_id = $1 LIMIT 1",
         &[&telegram_chat_id],
-    )?;
+    ).map_err(|e| DbError::new(
+        format!("get_channel_by_telegram_chat_id: SELECT channels (telegram_chat_id={telegram_chat_id})"),
+        e,
+    ))?;
 
-    channel_from_row(&row)
+    channel_from_row(&row).map_err(|e| DbError::new("get_channel_by_telegram_chat_id: decode channels row", e))
 }
 
-pub fn get_all_channels(client: &mut impl GenericClient) -> Result<Vec<Channel>, postgres::Error> {
-    let rows = client.query("SELECT * FROM channels", &[])?;
+pub fn get_all_channels(client: &mut impl GenericClient) -> Result<Vec<Channel>, DbError> {
+    let rows = client.query("SELECT * FROM channels", &[])
+        .map_err(|e| DbError::new("get_all_channels: SELECT channels", e))?;
 
-    rows.iter().map(channel_from_row).collect()
+    rows.iter().map(channel_from_row).collect::<Result<_, _>>()
+        .map_err(|e| DbError::new("get_all_channels: decode channels rows", e))
 }
 
-pub fn deactivate_channels(client: &mut impl GenericClient, telegram_chat_ids: &[i64]) -> Result<(), postgres::Error> {
+pub fn deactivate_channels(client: &mut impl GenericClient, telegram_chat_ids: &[i64]) -> Result<(), DbError> {
     if telegram_chat_ids.is_empty() {
         return Ok(())
     }
 
-    client.execute("UPDATE channels SET status = 'paused' WHERE telegram_chat_id in ({})", &[&telegram_chat_ids])?;
+    client.execute("UPDATE channels SET status = 'paused' WHERE telegram_chat_id = ANY($1)", &[&telegram_chat_ids])
+        .map_err(|e| DbError::new(
+            format!("deactivate_channels: UPDATE channels (telegram_chat_ids={telegram_chat_ids:?})"),
+            e,
+        ))?;
 
     Ok(())
 }
@@ -92,7 +103,7 @@ pub struct UpdateChannel<'a> {
     pub status: Option<&'a ChannelStatus>,
 }
 
-pub fn insert_or_update_channel(client: &mut impl GenericClient, channel: UpdateChannel) -> Result<i64, postgres::Error> {
+pub fn insert_or_update_channel(client: &mut impl GenericClient, channel: UpdateChannel) -> Result<i64, DbError> {
     let row = client.query_one(
         r#"
             INSERT INTO channels (telegram_chat_id, username, title, status)
@@ -109,9 +120,12 @@ pub fn insert_or_update_channel(client: &mut impl GenericClient, channel: Update
             &channel.title,
             &channel.status,
         ]
-    )?;
+    ).map_err(|e| DbError::new(
+        format!("insert_or_update_channel: upsert channels (telegram_chat_id={})", channel.telegram_chat_id),
+        e,
+    ))?;
 
-    row.try_get("id")
+    row.try_get("id").map_err(|e| DbError::new("insert_or_update_channel: decode returned id", e))
 }
 
 pub fn channel_from_row(row: &Row) -> Result<Channel, postgres::Error> {
@@ -134,7 +148,7 @@ pub struct CreateChannelPage<'a> {
     pub is_published: bool,
 }
 
-pub fn create_channel_page(client: &mut impl GenericClient, page: CreateChannelPage) -> Result<i64, postgres::Error> {
+pub fn create_channel_page(client: &mut impl GenericClient, page: CreateChannelPage) -> Result<i64, DbError> {
     let row = client.query_one(
         r#"
             INSERT INTO channel_pages (channel_id, slug, display_title, is_published)
@@ -148,9 +162,35 @@ pub fn create_channel_page(client: &mut impl GenericClient, page: CreateChannelP
             &page.title,
             &page.is_published,
         ]
-    )?;
+    ).map_err(|e| DbError::new(
+        format!("create_channel_page: upsert channel_pages (channel_id={})", page.channel_id),
+        e,
+    ))?;
 
-    row.try_get("channel_id")
+    row.try_get("channel_id").map_err(|e| DbError::new("create_channel_page: decode returned channel_id", e))
+}
+
+pub fn set_channel_crawl_error(
+    client: &mut impl GenericClient,
+    channel_id: i64,
+    error: &str,
+) -> Result<(), DbError> {
+    client.execute(
+        r#"
+            UPDATE channel_pages
+            SET
+                last_crawl_error = $1,
+                last_crawl_completed_at = now()
+            WHERE
+                channel_id = $2
+        "#,
+        &[&error, &channel_id],
+    ).map_err(|e| DbError::new(
+        format!("set_channel_crawl_error: UPDATE channel_pages (channel_id={channel_id})"),
+        e,
+    ))?;
+
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -164,8 +204,11 @@ pub struct CrawlCandidate {
 pub fn claim_channel_due_for_crawl(
     client: &mut impl GenericClient,
     crawl_stale_after: &Duration
-) -> Result<Option<CrawlCandidate>, postgres::Error> {
-    let mut tx = client.transaction()?;
+) -> Result<Option<CrawlCandidate>, DbError> {
+    let mut tx = client.transaction()
+        .map_err(|e| DbError::new("claim_channel_due_for_crawl: begin transaction", e))?;
+
+    let crawl_stale_after_secs = crawl_stale_after.as_secs_f64();
 
     let Some(row) = tx.query_opt(
         r#"
@@ -179,23 +222,25 @@ pub fn claim_channel_due_for_crawl(
             WHERE 
                 status = 'active'
                 AND (
-                    last_crawl_started_at + $1::interval < now()
+                    last_crawl_started_at + make_interval(secs => $1) < now()
                     OR last_crawl_started_at IS NULL
                 )
+                AND last_crawl_error IS NULL
             ORDER BY channel_pages.last_crawl_started_at NULLS FIRST
             LIMIT 1
             FOR UPDATE OF channel_pages SKIP LOCKED
         "#,
-        &[&format!("{} seconds", crawl_stale_after.as_secs())],
-    )? else { return Ok(None) };
-    
-    let candidate = CrawlCandidate {
-        channel_id: row.try_get("channel_id")?,
-        telegram_chat_id: row.try_get("telegram_chat_id")?,
-        crawl_checkpoint_message_id: row.try_get("crawl_checkpoint_message_id")?,
-        title: row.try_get("title")?,
+        &[&crawl_stale_after_secs],
+    ).map_err(|e| DbError::new(
+        format!("claim_channel_due_for_crawl: SELECT candidate (crawl_stale_after_secs={crawl_stale_after_secs})"),
+        e,
+    ))? else {
+        return Ok(None)
     };
-    
+
+    let candidate = crawl_candidate_from_row(&row)
+        .map_err(|e| DbError::new("claim_channel_due_for_crawl: decode candidate row", e))?;
+
     tx.execute(
         r#"
             UPDATE channel_pages
@@ -207,9 +252,24 @@ pub fn claim_channel_due_for_crawl(
                 channel_id = $1
         "#,
         &[&candidate.channel_id],
-    )?;
+    ).map_err(|e| DbError::new(
+        format!("claim_channel_due_for_crawl: UPDATE channel_pages (channel_id={})", candidate.channel_id),
+        e,
+    ))?;
 
-    tx.commit()?;
+    tx.commit().map_err(|e| DbError::new(
+        format!("claim_channel_due_for_crawl: commit transaction (channel_id={})", candidate.channel_id),
+        e,
+    ))?;
 
     Ok(Some(candidate))
+}
+
+fn crawl_candidate_from_row(row: &Row) -> Result<CrawlCandidate, postgres::Error> {
+    Ok(CrawlCandidate {
+        channel_id: row.try_get("channel_id")?,
+        telegram_chat_id: row.try_get("telegram_chat_id")?,
+        crawl_checkpoint_message_id: row.try_get("crawl_checkpoint_message_id")?,
+        title: row.try_get("title")?,
+    })
 }

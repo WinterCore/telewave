@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::debug;
 
-use crate::{Config, db, slug::slugify, tdjson::ClientId, tdtypes::{Chat, Supergroup, chat_to_supergroup_id, supergroup_to_chat_id}};
+use crate::{Config, db, slug::slugify, tdjson::ClientId, tdtypes::{Chat, ChatType, Supergroup, chat_to_supergroup_id, is_supergroup_chat_id, supergroup_to_chat_id}};
 
 pub struct ChannelManager<'a> {
     db_client: Client,
@@ -21,7 +21,9 @@ pub struct ChannelManager<'a> {
 impl<'a> ChannelManager<'a> {
     pub fn new(td_client: &'a ClientId, config: &Config) -> Self {
         Self {
-            db_client: db::connect(&config.database_url).expect("Should connect to DB"),
+            db_client: db::connect(&config.database_url).unwrap_or_else(|e| {
+                panic!("ChannelManager::new: connect to PostgreSQL: {}", db::error_string(&e))
+            }),
             td_client,
 
             pending_chat_ids_sync: vec![],
@@ -35,6 +37,10 @@ impl<'a> ChannelManager<'a> {
             "@type": "getChats",
             "chat_list": null,
             "limit": i32::MAX,
+            "@extra": {
+                "operation": "ChannelManager::sync_chats",
+                "request": "getChats",
+            },
         }));
     }
     
@@ -60,19 +66,34 @@ impl<'a> ChannelManager<'a> {
         self.td_client.send_json(&json!({
             "@type": "getSupergroup",
             "supergroup_id": supergroup_id,
+            "@extra": {
+                "operation": "ChannelManager::sync",
+                "request": "getSupergroup",
+                "chat_id": chat_id,
+                "supergroup_id": supergroup_id,
+            },
         }));
 
         self.td_client.send_json(&json!({
             "@type": "getChat",
             "chat_id": chat_id,
+            "@extra": {
+                "operation": "ChannelManager::sync",
+                "request": "getChat",
+                "chat_id": chat_id,
+            },
         }));
         
         Ok(())
     }
 
     pub fn handle_supergroup(&mut self, json: &Value) -> Result<(), String> {
-        let supergroup = Supergroup::deserialize(json)
-            .map_err(|e| format!("Failed to parse supergroup {}", e))?;
+        let supergroup: Supergroup = decode_tdlib(json, "ChannelManager::handle_supergroup")?;
+
+        // Not a supergroup
+        if !supergroup.is_channel {
+            return Ok(())
+        }
 
         let username = supergroup.usernames
             .as_ref()
@@ -90,14 +111,18 @@ impl<'a> ChannelManager<'a> {
                 // Updated by handle_chat
                 title: None,
             })
-            .map_err(|e| format!("Failed to update channel: {}", db::error_string(&e)))?;
+            .map_err(|e| format!("ChannelManager::handle_supergroup (chat_id={chat_id}): {e}"))?;
 
         Ok(())
     }
 
     pub fn handle_chat(&mut self, json: &Value) -> Result<(), String> {
-        let chat = Chat::deserialize(json)
-            .map_err(|e| format!("Failed to parse chat {}", e))?;
+        let chat: Chat = decode_tdlib(json, "ChannelManager::handle_chat")?;
+
+        // Not a supergroup channel
+        if !matches!(chat.kind, ChatType::Supergroup { is_channel: true, .. }) {
+            return Ok(())
+        }
 
         debug!("Chat data (chat_id={}) {:?}", chat.id, chat);
         
@@ -122,14 +147,15 @@ impl<'a> ChannelManager<'a> {
                     slug: &slugify(&chat.title),
                 }
             )
-        }).map_err(|e| db::error_string(&e))?;
+        }).map_err(|e| format!("ChannelManager::handle_chat (chat_id={}): {e}", chat.id))?;
 
         Ok(())
     }
 
 
     pub fn handle_chats(&mut self, json: &Value) -> Result<(), String> {
-        let mut tx = self.db_client.transaction().map_err(|e| format!("Failed to start db transaction: {}", db::error_string(&e)))?;
+        let mut tx = self.db_client.transaction()
+            .map_err(|e| format!("ChannelManager::handle_chats: begin transaction: {}", db::error_string(&e)))?;
 
         let chat_ids = json.get("chat_ids")
             .and_then(|cids| cids.as_array())
@@ -137,16 +163,19 @@ impl<'a> ChannelManager<'a> {
                 .iter()
                 .filter_map(|x| x.as_i64())
                 // Filter only supergroups
-                .filter(|x| *x < -1000000000000)
+                .filter(|x| is_supergroup_chat_id(*x))
                 .collect::<Vec<_>>()
-            ).ok_or("Failed to parse chat_ids")?;
+            ).ok_or_else(|| format!(
+                "ChannelManager::handle_chats: decode chat_ids (message_type={}): expected an array",
+                json["@type"].as_str().unwrap_or("<missing>"),
+            ))?;
 
-        debug!("Chat list updated {:?}", chat_ids);
+        debug!("ChannelManager::handle_chats: Chat list updated {:?}", chat_ids);
 
         let updated_channel_ids_set: HashSet<_> = chat_ids.iter().copied().collect();
 
         let existing_channels = db::channel::get_all_channels(&mut tx)
-            .map_err(|e| format!("Failed to get db channels: {}", db::error_string(&e)))?;
+            .map_err(|e| format!("ChannelManager::handle_chats: {e}"))?;
 
         let existing_channel_ids_set: HashSet<_> = existing_channels
             .iter()
@@ -159,9 +188,9 @@ impl<'a> ChannelManager<'a> {
             .collect();
         
         db::channel::deactivate_channels(&mut tx, &channels_to_deactivate)
-            .map_err(|e| format!("Failed to deactivate channels {:?}: {}", channels_to_deactivate, db::error_string(&e)))?;
+            .map_err(|e| format!("ChannelManager::handle_chats: {e}"))?;
 
-        tx.commit().map_err(|e| format!("Failed to commit deactivated channels: {}", db::error_string(&e)))?;
+        tx.commit().map_err(|e| format!("ChannelManager::handle_chats: commit transaction: {}", db::error_string(&e)))?;
 
 
         debug!("Pending channel metadata update {:?}", chat_ids);
@@ -171,5 +200,28 @@ impl<'a> ChannelManager<'a> {
 
 
         Ok(())
+    }
+}
+
+fn decode_tdlib<'de, T: Deserialize<'de>>(json: &'de Value, operation: &str) -> Result<T, String> {
+    T::deserialize(json).map_err(|e| format!(
+        "{operation}: decode TDLib message (message_type={}): {e}\n--------------------------------\n{}",
+        json["@type"].as_str().unwrap_or("<missing>"),
+        json
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_parse_error_identifies_handler_message_type_and_cause() {
+        let update = json!({"@type": "updateNewChat", "chat": {"id": 42}});
+        let error = decode_tdlib::<Chat>(&update, "ChannelManager::handle_chat").unwrap_err();
+
+        assert!(error.contains("ChannelManager::handle_chat"));
+        assert!(error.contains("message_type=updateNewChat"));
+        assert!(error.contains("missing field `id`"));
     }
 }

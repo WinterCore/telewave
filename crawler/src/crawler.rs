@@ -30,7 +30,9 @@ pub struct Crawler<'a> {
 impl<'a> Crawler<'a> {
     pub fn new(td_client: &'a ClientId, config: &Config) -> Self {
         Self {
-            client: db::connect(&config.database_url).expect("Should connect to DB"),
+            client: db::connect(&config.database_url).unwrap_or_else(|e| {
+                panic!("Crawler::new: connect to PostgreSQL: {}", db::error_string(&e))
+            }),
             crawl_stale_after: config.crawl_stale_after,
             last_sync_time: SystemTime::UNIX_EPOCH,
             sync_interval: Duration::from_millis(60_000 / config.crawl_rate_per_min),
@@ -58,7 +60,7 @@ impl<'a> Crawler<'a> {
 
             // Check if we reached the timeout for the last request
             if self.last_sync_time + Duration::from_millis(REQUEST_TIMEOUT_MS) > SystemTime::now() {
-                // TODO: 
+                // Timeout not reached yet
                 return Ok(())
             }
 
@@ -66,6 +68,15 @@ impl<'a> Crawler<'a> {
             // Timeout reached
             if state.retry_count >= MAX_RETRIES {
                 debug!("Max retry limit reached when crawling channel {}", state.channel.channel_id);
+                db::channel::set_channel_crawl_error(
+                    &mut self.client,
+                    state.channel.channel_id,
+                    "Max retry limit reached",
+                ).map_err(|err| format!(
+                    "Crawler::do_crawl (chat_id={}, retry_count={}): {err}",
+                    state.channel.telegram_chat_id,
+                    state.retry_count,
+                ))?;
                 return Ok(())
             }
 
@@ -85,7 +96,13 @@ impl<'a> Crawler<'a> {
             "offset": 0,
             "limit": 100,
             "filter": { "@type": "searchMessagesFilterAudio" },
-            "@extra": extra,
+            "@extra": {
+                "target": extra.target,
+                "request_id": extra.request_id,
+                "operation": "Crawler::do_crawl",
+                "request": "searchChatMessages",
+                "chat_id": state.channel.telegram_chat_id,
+            },
         }));
 
         self.last_sync_time = SystemTime::now();
@@ -98,7 +115,7 @@ impl<'a> Crawler<'a> {
         // Start crawling channel if we're not already
         if self.channel_crawl_state.is_none() {
             let candidate = claim_channel_due_for_crawl(&mut self.client, &self.crawl_stale_after)
-                .map_err(|err| db::error_string(&err))?;
+                .map_err(|err| format!("Crawler::crawl: {err}"))?;
 
             let Some(candidate) = candidate else {
                 return Ok(());
@@ -122,24 +139,39 @@ impl<'a> Crawler<'a> {
             return Ok(());
         }
 
-        // TODO: Check if crawl is stalled
+        // TODO: Check if crawl is stalled (i don't remember what this means)
 
         self.do_crawl()?;
 
         Ok(())
     }
 
-    pub fn handle_response(&self, response: Value) -> Result<(), String> {
-        let extra = Extra::deserialize(&response["@extra"]).map_err(|_| "Unknown target")?;
+    pub fn handle_response(&self, response: &Value) -> Result<(), String> {
+        let message_type = response["@type"].as_str().unwrap_or("<missing>");
+        let extra = Extra::deserialize(&response["@extra"]).map_err(|e| format!(
+            "Crawler::handle_response: decode @extra (message_type={message_type}): {e}",
+        ))?;
 
-        if extra.target != ExtraTarget::Crawler || extra.request_id != self.nonce {
-            return Err("[Crawler]: Invalid response".to_owned());
+        if extra.target != ExtraTarget::Crawler {
+            return Err(format!(
+                "Crawler::handle_response: unexpected target {:?} (message_type={message_type}, request_id={})",
+                extra.target,
+                extra.request_id,
+            ));
         }
         
-        let json_messages = response.get("messages").ok_or(".messages is missing")?;
+        let json_messages = response.get("messages").ok_or_else(|| format!(
+            "Crawler::handle_response: missing messages field (message_type={message_type}, request_id={})",
+            extra.request_id,
+        ))?;
 
         let messages = Vec::<Message>::deserialize(json_messages)
-            .map_err(|_| "Failed to parse .messages");
+            .map_err(|e| format!(
+                "Crawler::handle_response: decode messages (message_type={message_type}, request_id={}): {e}",
+                extra.request_id,
+            ))?;
+
+        print!("Messages {:?}", messages.iter().len());
 
         
         Ok(())

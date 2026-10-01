@@ -30,15 +30,47 @@ fn next_update(rx: &mut Receiver) -> Option<Value> {
     loop {
         match rx.receive_json(Duration::from_secs(1)) {
             Some(Ok(v)) => return Some(v),
-            Some(Err(e)) => eprintln!("bad JSON from TDLib: {e}"),
+            Some(Err(e)) => error!(
+                operation = "next_update",
+                error = %e,
+                "Failed to decode TDLib JSON",
+            ),
             None => return None,
         }
     }
 }
 
+fn log_handler_error(operation: &str, json: &Value, error: &str) {
+    let entity_id = json.get("id")
+        .or_else(|| json.get("chat_id"))
+        .or_else(|| json.get("chat").and_then(|chat| chat.get("id")))
+        .and_then(Value::as_i64);
+
+    error!(
+        operation,
+        message_type = json["@type"].as_str().unwrap_or("<missing>"),
+        entity_id = ?entity_id,
+        request_context = %json["@extra"],
+        error = %error,
+        "TDLib message handler failed",
+    );
+}
+
+fn log_tdlib_request_error(phase: &str, json: &Value) {
+    error!(
+        operation = "tdlib.request",
+        phase,
+        code = ?json["code"].as_i64(),
+        request_context = %json["@extra"],
+        error = %json["message"],
+        "TDLib request failed",
+    );
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_file(true)
+        .with_line_number(true)
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
@@ -65,7 +97,7 @@ fn main() {
                     break;
                 }
             },
-            Some("error") => println!("{}", format!("Error: {}", json["message"]).red()),
+            Some("error") => log_tdlib_request_error("authorization", &json),
             _ => (),
         }
     }
@@ -87,18 +119,31 @@ fn main() {
         
         // Sync channels
         let _ = channel_manager.sync()
-            .inspect_err(|x| error!(x));
+            .inspect_err(|err| error!(
+                operation = "ChannelManager::sync",
+                error = %err,
+                "Channel synchronization failed",
+            ));
 
 
         // Crawl
         let _ = crawler.crawl()
-            .inspect_err(|x| error!(x));
+            .inspect_err(|err| error!(
+                operation = "Crawler::crawl",
+                error = %err,
+                "Crawl step failed",
+            ));
 
         let Some(json) = update else { continue };
 
         match json["@type"].as_str() {
             None => {
-                eprintln!("bad @type from TDLib");
+                error!(
+                    operation = "main.dispatch",
+                    message_type = %json["@type"],
+                    request_context = %json["@extra"],
+                    "TDLib message has a missing or non-string @type",
+                );
                 continue;
             },
             Some("updateAuthorizationState") => {
@@ -114,24 +159,34 @@ fn main() {
             Some("chats") => {
                 // Chat list synced; the local database has our chats now.
                 let _ = channel_manager.handle_chats(&json)
-                    .inspect_err(|x| error!(x));
+                    .inspect_err(|err| log_handler_error("ChannelManager::handle_chats", &json, err));
 
                 continue;
             },
-            Some("updateNewChat") | Some("chat") => {
+            Some("chat") => {
                 let _ = channel_manager.handle_chat(&json)
-                    .inspect_err(|x| error!(x));
+                    .inspect_err(|err| log_handler_error("ChannelManager::handle_chat", &json, err));
+
+                continue;
+            },
+            Some("updateNewChat") => {
+                let Some(chat) = json.get("chat") else {
+                    continue;
+                };
+
+                let _ = channel_manager.handle_chat(chat)
+                    .inspect_err(|err| log_handler_error("ChannelManager::handle_chat", &json, err));
 
                 continue;
             },
             Some("supergroup") => {
                 let _ = channel_manager.handle_supergroup(&json)
-                    .inspect_err(|x| error!(x));
+                    .inspect_err(|err| log_handler_error("ChannelManager::handle_supergroup", &json, err));
 
                 continue;
             },
             Some("error") => {
-                error!("Error: {}", json["message"]);
+                log_tdlib_request_error("main", &json);
                 continue;
             },
             Some(_) => (),
@@ -140,8 +195,8 @@ fn main() {
         match json["@extra"]["target"].as_str() {
             None => (), // Fall through
             Some("crawler") => {
-                let _ = crawler.handle_response(json)
-                    .inspect_err(|x| println!("{}", format!("Crawler Error: {x}")));
+                let _ = crawler.handle_response(&json)
+                    .inspect_err(|err| log_handler_error("Crawler::handle_response", &json, err));
                 continue;
             },
             Some(other) => {
