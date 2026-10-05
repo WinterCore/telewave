@@ -4,6 +4,7 @@ use std::{error::Error, time::{Duration, SystemTime}};
 
 use super::Error as DbError;
 
+/// Mirror of the `channelstatus` Postgres enum.
 #[derive(Debug)]
 pub enum ChannelStatus {
     Active,
@@ -48,11 +49,21 @@ impl<'a> FromSql<'a> for ChannelStatus {
 }
 
 pub struct Channel {
+    /// Surrogate primary key (`GENERATED ALWAYS AS IDENTITY`) — the id every
+    /// other table's `channel_id` FK points at.
     pub id: i64,
+    /// TDLib chat id; negative (below -10^12) for channels/supergroups.
+    /// Unique, and the upsert conflict key.
     pub telegram_chat_id: i64,
+    /// Primary active `@username` of the channel; None if it has none (or
+    /// the supergroup data hasn't synced yet).
     pub username: Option<String>,
+    /// Channel display title (from TDLib's `chat.title`).
     pub title: String,
+    /// Active = in the account's chat list, eligible for crawling.
+    /// Paused = reconciliation noticed it's gone from the list.
     pub status: ChannelStatus,
+    /// When the row was first inserted.
     pub created_at: SystemTime,
 }
 
@@ -93,13 +104,17 @@ pub fn deactivate_channels(client: &mut impl GenericClient, telegram_chat_ids: &
     Ok(())
 }
 
+/// Partial upsert for `channels`: `None` fields mean "leave unchanged"
+/// (NULL on the wire, COALESCE keeps the existing value), so the
+/// getSupergroup and getChat half-writes commute.
 pub struct UpdateChannel<'a> {
     /// The conflict key; always required.
     pub telegram_chat_id: &'a i64,
-    /// The rest are partial-update columns: None means "leave unchanged"
-    /// (NULL on the wire, COALESCE keeps the existing value).
+    /// Primary `@username` from the supergroup data, if that half arrived.
     pub username: Option<&'a String>,
+    /// Title from the chat data, if that half arrived.
     pub title: Option<&'a String>,
+    /// Usually `Some(Active)` — either half-write reactivates a paused channel.
     pub status: Option<&'a ChannelStatus>,
 }
 
@@ -141,10 +156,19 @@ pub fn channel_from_row(row: &Row) -> Result<Channel, postgres::Error> {
     )
 }
 
+/// Creates the `channel_pages` row for a channel; a no-op (returning the
+/// existing page id) if the page already exists. Nothing here is ever
+/// updated after creation.
 pub struct CreateChannelPage<'a> {
+    /// `channels.id` — *not* a Telegram chat id.
     pub channel_id: &'a i64,
+    /// Unique URL slug (`slugify` + random suffix). Only applied at
+    /// creation; existing pages keep theirs.
     pub slug: &'a str,
+    /// `display_title` override for the page; None = fall back to the
+    /// channel title on the site.
     pub title: Option<&'a str>,
+    /// Drafts are `false` — pages stay invisible until published manually.
     pub is_published: bool,
 }
 
@@ -179,8 +203,7 @@ pub fn set_channel_crawl_error(
         r#"
             UPDATE channel_pages
             SET
-                last_crawl_error = $1,
-                last_crawl_completed_at = now()
+                last_crawl_error = $1
             WHERE
                 channel_id = $2
         "#,
@@ -193,11 +216,50 @@ pub fn set_channel_crawl_error(
     Ok(())
 }
 
+/// Stamps a successful end-of-crawl on the page row: the completion time
+/// (from which the staleness clock runs) and the message id the next crawl
+/// should resume from. Also clears `last_crawl_error` — a completed crawl
+/// is by definition not in the error state, and the claim filter excludes
+/// channels with an error set.
+///
+/// `None` for the checkpoint means the channel had no messages — the next
+/// crawl starts from the beginning again, same as a never-crawled channel.
+pub fn finish_channel_crawl(
+    client: &mut impl GenericClient,
+    channel_id: i64,
+    crawl_checkpoint_message_id: Option<i64>,
+) -> Result<(), DbError> {
+    client.execute(
+        r#"
+            UPDATE channel_pages
+            SET
+                last_crawl_completed_at = now(),
+                crawl_checkpoint_message_id = $1,
+                last_crawl_error = NULL
+            WHERE
+                channel_id = $2
+        "#,
+        &[&crawl_checkpoint_message_id, &channel_id],
+    ).map_err(|e| DbError::new(
+        format!("finish_channel_crawl: UPDATE channel_pages (channel_id={channel_id})"),
+        e,
+    ))?;
+
+    Ok(())
+}
+
+/// A channel claimed for a crawl — everything the crawl loop needs to
+/// start (and to stamp errors back onto the page row).
 #[derive(Debug, Clone)]
 pub struct CrawlCandidate {
+    /// `channels.id` — for stamping `channel_pages` (claim, errors).
     pub channel_id: i64,
+    /// TDLib chat id — the one `searchChatMessages` is sent to.
     pub telegram_chat_id: i64,
+    /// Last message id already persisted (`channel_pages`' checkpoint);
+    /// None = never crawled, start from the channel's beginning.
     pub crawl_checkpoint_message_id: Option<i64>,
+    /// Channel title; for logs only.
     pub title: String,
 }
 

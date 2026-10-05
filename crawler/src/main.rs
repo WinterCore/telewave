@@ -1,9 +1,8 @@
 use std::time::Duration;
 
 use owo_colors::OwoColorize;
-use serde::Deserialize;
-use serde_json::{Value, json};
-use tracing::{debug, error, trace};
+use serde_json::Value;
+use tracing::error;
 use tracing_subscriber::EnvFilter;
 
 use crate::{
@@ -11,8 +10,7 @@ use crate::{
     channel_manager::ChannelManager,
     config::Config,
     crawler::Crawler,
-    tdjson::{ClientId, Receiver, set_log_verbosity_level},
-    tdtypes::Supergroup
+    tdjson::{ClientId, Receiver, set_log_verbosity_level}
 };
 
 mod auth;
@@ -23,6 +21,7 @@ mod channel_manager;
 mod tdtypes;
 mod db;
 mod slug;
+mod audio_downloader;
 
 /// Blocks until TDLib produces one parseable update.
 /// Timeouts are waited out; bad JSON is logged and skipped.

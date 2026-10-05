@@ -51,7 +51,7 @@ impl Config {
             channel_sync_rate_per_min: rate("CHANNEL_SYNC_RATE_PER_MIN", 3),
             crawl_rate_per_min: rate("CRAWL_RATE_PER_MIN", 6),
             download_rate_per_min: rate("DOWNLOAD_RATE_PER_MIN", 2),
-            crawl_stale_after: hours("CRAWL_STALE_AFTER_HOURS", 6),
+            crawl_stale_after: minutes("CRAWL_STALE_AFTER_MIN", 360),
         }
     }
 }
@@ -81,7 +81,8 @@ fn rate(key: &str, default: u64) -> u64 {
     }
 }
 
-/// Reads an optional duration in whole hours. 0 is allowed and means "always".
-fn hours(key: &str, default: u64) -> Duration {
-    Duration::from_secs(number(key, default) * 3600)
+/// Reads an optional duration in whole minutes. 0 is allowed and means
+/// "always due".
+fn minutes(key: &str, default: u64) -> Duration {
+    Duration::from_secs(number(key, default) * 60)
 }

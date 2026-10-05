@@ -64,6 +64,19 @@ pub enum Update {
     Other,
 }
 
+/// `foundChatMessages` — the searchChatMessages response: one page of
+/// messages plus the cursor for the next request. `@type`/`@extra` are
+/// ignored by serde and may keep riding along in the same JSON.
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct FoundChatMessages {
+    /// Total messages matching the filter in the whole chat.
+    pub total_count: i32,
+    pub messages: Vec<Message>,
+    /// Feed back as the next request's `from_message_id`; 0 when the
+    /// chat is exhausted (TDLib uses 0 for "nothing left").
+    pub next_from_message_id: i64,
+}
+
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 #[serde(tag = "@type")]
 pub enum TextEntityType {
@@ -226,10 +239,39 @@ mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
     use super::{
-        Chat, ChatMemberStatusKind, ChatType, Message, MessageContent, MessageSender,
-        TextEntityType, Update, chat_to_supergroup_id, is_supergroup_chat_id,
+        Chat, ChatMemberStatusKind, ChatType, FoundChatMessages, Message, MessageContent,
+        MessageSender, TextEntityType, Update, chat_to_supergroup_id, is_supergroup_chat_id,
         supergroup_to_chat_id, unix_to_system_time, unix_to_system_time_opt,
     };
+
+    #[test]
+    fn deserializes_a_found_chat_messages_page() {
+        let page: FoundChatMessages = serde_json::from_value(json!({
+            "@type": "foundChatMessages",
+            "total_count": 42,
+            "messages": [],
+            "next_from_message_id": 102_760_448,
+            "@extra": { "target": "crawler" }
+        }))
+        .expect("foundChatMessages should deserialize");
+
+        assert_eq!(page.total_count, 42);
+        assert!(page.messages.is_empty());
+        assert_eq!(page.next_from_message_id, 102_760_448);
+    }
+
+    #[test]
+    fn deserializes_an_exhausted_found_chat_messages_page() {
+        let page: FoundChatMessages = serde_json::from_value(json!({
+            "@type": "foundChatMessages",
+            "total_count": 42,
+            "messages": [],
+            "next_from_message_id": 0
+        }))
+        .expect("exhausted page should deserialize");
+
+        assert_eq!(page.next_from_message_id, 0);
+    }
 
     #[test]
     fn deserializes_the_used_audio_message_fields() {

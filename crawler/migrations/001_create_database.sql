@@ -99,6 +99,9 @@ CREATE TABLE channel_page_recordings (
     storage_key TEXT,
     published_at TIMESTAMPTZ NOT NULL,
     downloaded_at TIMESTAMPTZ,
+    download_attempts INTEGER NOT NULL DEFAULT 0
+        CHECK (download_attempts >= 0),
+    last_error TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     UNIQUE (channel_id, telegram_message_id),
@@ -111,27 +114,3 @@ CREATE TABLE channel_page_recordings (
 
 CREATE INDEX channel_page_recordings_published_idx
     ON channel_page_recordings (channel_id, published_at DESC);
-
-CREATE TABLE recording_jobs (
-    recording_id BIGINT PRIMARY KEY
-        REFERENCES channel_page_recordings(id) ON DELETE CASCADE,
-
-    source_storage_key TEXT,
-
-    attempts INTEGER NOT NULL DEFAULT 0
-        CHECK (attempts >= 0),
-
-    last_error TEXT,
-    failed_at TIMESTAMPTZ,
-    completed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX recording_jobs_pending_idx
-    ON recording_jobs (created_at)
-    WHERE failed_at IS NULL
-        AND completed_at IS NULL;
-
-CREATE INDEX recording_jobs_completed_idx
-    ON recording_jobs (completed_at);
